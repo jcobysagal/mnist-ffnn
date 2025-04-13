@@ -8,6 +8,7 @@ data management easier for CUDA.
 //Includes
 #include <iostream>
 #include <fstream>
+#include <filesystem>
 #include <sstream>
 #include <tuple>
 #include <vector>
@@ -27,9 +28,10 @@ data management easier for CUDA.
 #define TRAIN_SIZE 60000
 #define TEST_SIZE 10000
 #define EPOCHS 30
-#define LEARNING_RATE 0.5
+#define LEARNING_RATE 0.1
 #define LAMBDA 5.0
 #define BLOCK_SIZE 256
+
 
 // Modify the CUDA_CHECK macro to print more information
 #define CUDA_CHECK(call) \
@@ -54,17 +56,17 @@ double get_time() {
 }
 // Function to generate batch order for stochastic gradient descent 
 std::vector<int> generateShuffledArray(int n) {
-    // Create a vector with numbers from 1 to n
+    // Create a vector with numbers from 0 to n - 1
     std::vector<int> numbers(n);
     for (int i = 0; i < n; ++i) {
-        numbers[i] = i + 1;
+        numbers[i] = i;
     }
     // Shuffle the vector using a random engine
     std::shuffle(numbers.begin(), numbers.end(), gen);
     return numbers;
 }
 // random number generator from normal distribution
-double randnorm() {
+float randnorm() {
 	// Define the "standard" normal distribution
 	std::normal_distribution<> d(0, 1);
 	return d(gen);
@@ -82,16 +84,24 @@ int get_max_index(float* res) {
 }
 // Read mnist training data
 std::tuple<int*, float*> read_mnist(std::string a) {
+
+	// Get path to data
+	std::filesystem::path current_path = std::filesystem::current_path();
+
+	std::filesystem::path parent_path = current_path.parent_path();
+
 	std::ifstream file;
 	int* labels;
     float *data;
 	if (a == "test") {
-		file.open("data/mnist_test.csv");
+		std::filesystem::path file_path = parent_path / "data/mnist_dataset/mnist_test.csv";
+		file.open(file_path);
 		labels = new int[TEST_SIZE];
         data = new float[TEST_SIZE * INPUT_SIZE];
 	}
 	else if (a == "train") {
-		file.open("data/mnist_train.csv");
+		std::filesystem::path file_path = parent_path / "data/mnist_dataset/mnist_train.csv";
+		file.open(file_path);
 		labels = new int[TRAIN_SIZE];
         data = new float[TRAIN_SIZE * INPUT_SIZE];
 	}
@@ -141,11 +151,11 @@ std::tuple<int*, float*, int*, float*> get_data_tuples() {
 }
 // Functions for ML
 // sigmoid function
-double sigmoid(double z) {
+__device__ float sigmoid(float z) {
 	return 1.0 / (1.0 + exp(-z));
 }
 // sigmoid prime function
-double sigmoid_prime(double z) {
+__device__ float sigmoid_prime(float z) {
 	return sigmoid(z) * (1 - sigmoid(z));
 }
 // Define our CUDA kernels (for now it's all naive approach)
@@ -153,14 +163,16 @@ double sigmoid_prime(double z) {
 __global__ void sigmoid_vec(float *a, float *c, int n) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i < n) {
-		c[i] = 1.0 / (1.0 + exp(-a[i]));
+		// c[i] = 1.0 / (1.0 + exp(-a[i]));
+		c[i] = sigmoid(a[i]);
 	}
 }
 // Sigmoid prime kernel
 __global__ void sigmoid_prime_vec(float *a, float *c, int n) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i < n) {
-		c[i] = 1.0 / (1.0 + exp(-a[i])) * (1 - 1.0 / (1.0 + exp(-a[i])));
+		// c[i] = 1.0 / (1.0 + exp(-a[i])) * (1 - 1.0 / (1.0 + exp(-a[i])));
+		c[i] = sigmoid_prime(a[i]);
 	}
 }
 // Vector add kernel
@@ -280,6 +292,8 @@ class CUDA_NN{
 		std::cout << "Initializing network..." << std::endl;
 		num_layers = sizes.size();
 		this->sizes = sizes;
+		this->large_weights = large_weights;
+
 		// Get total number of weights
 		weights_len = 0;
 		for (int i = 0; i < num_layers - 1; i++) {
@@ -334,7 +348,7 @@ class CUDA_NN{
 
 			std::cout << "Beginning epoch " << epoch << std::endl;
 			double st = get_time();
-			batch_order = generateShuffledArray(TRAIN_SIZE - 1);
+			batch_order = generateShuffledArray(TRAIN_SIZE);
 			for (int i = 0; i < num_batches; i++) {
 				std::vector<int> batch_indices(batch_order.begin() + i * mini_batch_size, batch_order.begin() + i * mini_batch_size  + mini_batch_size);
 				update_mini_batch(batch_indices, mini_batch_size, training_labels, training_data_gpu, LEARNING_RATE, LAMBDA, TRAIN_SIZE);
@@ -364,11 +378,21 @@ class CUDA_NN{
 	float *weights_gpu, *biases_gpu;
 	size_t num_layers;
 	int weights_len, biases_len, size_w, size_b;
+	bool large_weights;
 	
 	void initialize_weights() {
-		for (int i = 0; i < weights_len; i++) {
-			weights[i] = randnorm();
-		}
+		int accum = 0;
+		for (int i = 0; i < num_layers - 1; i++) {
+			int j = 0;
+			while (j < accum + sizes[i]*sizes[i+1]) {
+				weights[j] = randnorm();
+				if (!large_weights) {
+					weights[j] /= pow(sizes[i], 0.5);
+				}
+				j++;
+			}
+			accum += sizes[i]*sizes[i+1];
+		}	
 	}
 	void initialize_biases() {
 		for (int i = 0; i < biases_len; i++) {

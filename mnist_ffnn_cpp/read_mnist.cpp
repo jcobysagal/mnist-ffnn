@@ -1,16 +1,22 @@
 #include "read_mnist.h"
 
-#include <iostream>
-#include <vector>
-
 // Read mnist training data
 std::vector<std::vector<double>> read_mnist(std::string a) {
+	// Get path to data
+	std::filesystem::path current_path = std::filesystem::current_path();
+
+	std::filesystem::path parent_path = current_path.parent_path();
+	// This is in subfolder of repo, so we want the parent of THIS parent
+	parent_path = parent_path.parent_path();
+
 	std::ifstream file;
 	if (a == "test") {
-		file.open("mnist_test.csv");
+		std::filesystem::path file_path = parent_path / "data/mnist_dataset/mnist_test.csv";
+		file.open(file_path);
 	}
 	else if (a == "train") {
-		file.open("mnist_train.csv");
+		std::filesystem::path file_path = parent_path / "data/mnist_dataset/mnist_train.csv";
+		file.open(file_path);
 	}
 	else {
 		std::cout << "Invalid input. Please enter 'test' or 'train'." << std::endl;
