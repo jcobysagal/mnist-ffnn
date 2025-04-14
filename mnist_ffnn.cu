@@ -220,7 +220,8 @@ __global__ void matrix_add(float *A, float *B, float *C, int n, int m) {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (row < m && col < n) {
-		C[row * col] = A[row * col] + B[row * col];
+		int idx = row * n + col;
+		C[idx] = A[idx] + B[idx];
 	}
 }
 // Matrix sub kernel
@@ -229,7 +230,8 @@ __global__ void matrix_sub(float *A, float *B, float *C, int n, int m) {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (row < m && col < n) {
-		C[row * col] = A[row * col] - B[row * col];
+		int idx = row * n + col;
+		C[idx] = A[idx] - B[idx];
 	}
 }
 // Matrix-vector mult kernel
@@ -269,6 +271,32 @@ __global__ void matmul_ab(float *A, float *B, float *C, int m, int k, int n) {
         C[row * n + col] = sum;
     }
 }
+// Matrix-matrix mult kernel
+__global__ void matmul_aTb(float *A, float *B, float *C, int m, int k, int n) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < k && col < n) {
+        float sum = 0.0f;
+        for (int l = 0; l < m; l++) {
+            sum += A[row + k * l] * B[l * n + col];
+        }
+        C[row * n + col] = sum;
+    }
+}
+// Matrix-matrix mult kernel
+__global__ void matmul_abT(float *A, float *B, float *C, int m, int k, int n) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < m && col < n) {
+        float sum = 0.0f;
+        for (int l = 0; l < k; l++) {
+            sum += A[row * k + l] * B[l + n * col];
+        }
+        C[row * n + col] = sum;
+    }
+}
 // Hadamard product of two vectors kernel
 __global__ void hadamard_vec(float *a, float *b, float *c, int n) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -282,7 +310,8 @@ __global__ void hadamard_mat(float *A, float *B, float *C, int n, int m) {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (row < m && col < n) {
-		C[row * col] = A[row * col] * B[row * col];
+		int idx = row * n + col;
+		C[idx] = A[idx] * B[idx];
 	}
 }
 class CUDA_NN{
