@@ -251,13 +251,13 @@ __global__ void matTvecmul_gpu(float *A, float *b, float *c, int m, int k) {
     if (row < k) {
         float sum = 0.0f;
         for (int j = 0; j < m; j++) {
-            sum += A[row +  m * j] * b[j];
+            sum += A[row +  k * j] * b[j];
         }
         c[row] = sum;
     }
 }
 // Matrix-matrix mult kernel
-__global__ void matmul(float *A, float *B, float *C, int m, int k, int n) {
+__global__ void matmul_ab(float *A, float *B, float *C, int m, int k, int n) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
 
