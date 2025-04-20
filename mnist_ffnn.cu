@@ -588,14 +588,14 @@ class CUDA_NN{
 		CUDA_CHECK(cudaMemcpy(activations_gpu, &training_data_gpu[batch * INPUT_SIZE], INPUT_SIZE * mini_batch_size * sizeof(float), cudaMemcpyDeviceToDevice));
 		// block size = 1024
 		dim3 block_size(32, 32);
-		dim3 grid_size((mini_batch_size + block_size.x - 1) / block_size.x, (sizes[1] + block_size.y - 1) / block_size.y); 
+		dim3 grid_size((sizes[1] + block_size.x - 1) / block_size.x, (mini_batch_size + block_size.y - 1) / block_size.y); 
 		
 		// FORWARD PASS
 		for (int i = 0; i < num_layers - 1; i++) {
-			if (i > 0) grid_size.y = (sizes[i + 1] + block_size.y - 1) / block_size.y;
+			if (i > 0) grid_size.x = (sizes[i + 1] + block_size.x - 1) / block_size.x;
 			// Calculate z[i] = w[i] * a[i-1] + b[i]
 			matmul_abT<<<grid_size, block_size>>>
-			(&weights_gpu[accum_w], &activations_gpu[accum_a], &zs_gpu[accum_z], sizes[i + 1], sizes[i], mini_batch_size);
+			(&activations_gpu[accum_a], &weights_gpu[accum_w], &zs_gpu[accum_z], mini_batch_size, sizes[i], sizes[i+1]);
 
 			accum_a += sizes[i] * mini_batch_size; // updated accumulated A layers
 
@@ -665,18 +665,19 @@ class CUDA_NN{
 			sigmoid_prime_vec<<<(sizes[i] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&zs_gpu[accum_z], &zs_gpu[accum_z], sizes[i] * mini_batch_size);
 			// Calculate Delta
 			grid_size.x = (sizes[i - 1] + block_size.x - 1) / block_size.x;
-			grid_size.y = (mini_batch_size + block_size.y - 1) / block_size.y;
-			matmul_abT<<<grid_size, block_size>>>
+			matmul_ab<<<grid_size, block_size>>>
 			(&delta_gpu[accum_z + sizes[i] * mini_batch_size], &weights_gpu[accum_w], &delta_gpu[accum_z], mini_batch_size, sizes[i], sizes[i - 1]);
 
-			hadamard_vec<<<(sizes[i] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], sizes[i]);
+			
+			hadamard_mat<<<grid_size, block_size>>>
+			(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], mini_batch_size, sizes[i]);
 
 			// Update nabla
 			CUDA_CHECK(cudaMemcpy(&nabla_b_gpu[accum_z], &delta_gpu[accum_z], sizes[i] * sizeof(float), cudaMemcpyDeviceToDevice));
 
-			grid_size.x = ((sizes[i - 1] + block_size.x - 1) / block_size.x);
-			grid_size.y = ((sizes[i] + block_size.y - 1) / block_size.y);
-			batch_outer_product<<<grid_size, block_size>>>
+			grid_size_3D.x = ((sizes[i - 1] + block_size.x - 1) / block_size.x);
+			grid_size_3D.y = ((sizes[i] + block_size.y - 1) / block_size.y);
+			batch_outer_product<<<grid_size_3D, block_size_3D>>>
 			(&delta_gpu[accum_z], &activations_gpu[accum_a], &nabla_w_gpu[accum_w], sizes[i], sizes[i - 1], mini_batch_size, weights_len, accum_w);
 		}
 		CUDA_CHECK(cudaDeviceSynchronize());
