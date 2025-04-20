@@ -182,6 +182,19 @@ __global__ void vector_add(float *a, float *b, float *c, int n) {
 		c[i] = a[i] + b[i];
 	}
 }
+// Add vector to matrix kernel
+__global__ void add_vec_to_mat(float *A, float *b, float *C, int n, int m) {
+	// n by m matrix A
+	// vector size m b
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (row < n && col < m) {
+		for (int i = 0; i < m; i++) {
+			C[row * m + i] = A[row * m + i] + b[i];
+		}
+	}
+}
 // Vector add kernel
 __global__ void vector_sub(float *a, float *b, float *c, int n) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -197,7 +210,19 @@ __global__ void outer_product(float *a, float *b, float *c, int n, int m) {
 	int i = blockIdx.y * blockDim.y + threadIdx.y;
 	int j = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i < n && j < m) {
-		c[i*m + j] = a[i] * b[j];
+		c[i * m + j] = a[i] * b[j];
+	}
+}
+// Batch outer product kernel
+__global__ void batch_outer_product(float *A, float *B, float *C, int n, int m, int mini_batch_size, int weights_len, int offset){
+	// n * mini_batch_size - size of a
+	// m * mini_batch_size - size of b
+	// n * m - size of c
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int depth = blockIdx.z * blockDim.z + threadIdx.z;
+	if (row < n && col < m && depth < mini_batch_size) {
+		C[depth * weights_len + row * m + col + offset] = A[row + depth * n] * B[col + depth * m];
 	}
 }
 // Weights update kernel
@@ -259,42 +284,42 @@ __global__ void matTvecmul_gpu(float *A, float *b, float *c, int m, int k) {
     }
 }
 // Matrix-matrix mult kernel
-__global__ void matmul_ab(float *A, float *B, float *C, int m, int k, int n) {
+__global__ void matmul_ab(float *A, float *B, float *C, int n, int m, int k) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (row < m && col < n) {
-        float sum = 0.0f;
-        for (int l = 0; l < k; l++) {
-            sum += A[row * k + l] * B[l * n + col];
-        }
-        C[row * n + col] = sum;
-    }
-}
-// Matrix-matrix mult kernel
-__global__ void matmul_aTb(float *A, float *B, float *C, int m, int k, int n) {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (row < k && col < n) {
+    if (row < n && col < k) {
         float sum = 0.0f;
         for (int l = 0; l < m; l++) {
-            sum += A[row + k * l] * B[l * n + col];
+            sum += A[row * m + l] * B[col + l * k];
         }
-        C[row * n + col] = sum;
+        C[row * k + col] = sum;
     }
 }
-// Matrix-matrix mult kernel
-__global__ void matmul_abT(float *A, float *B, float *C, int m, int k, int n) {
+// MatrixT-matrix mult kernel
+__global__ void matmul_aTb(float *A, float *B, float *C, int n, int m, int k) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (row < m && col < n) {
+    if (row < m && col < k) {
+        float sum = 0.0f;
+        for (int l = 0; l < n; l++) {
+            sum += A[row + m * l] * B[col + l * k];
+        }
+        C[row * k + col] = sum;
+    }
+}
+// Matrix-matrixT mult kernel
+__global__ void matmul_abT(float *A, float *B, float *C, int n, int m, int k) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < n && col < m) {
         float sum = 0.0f;
         for (int l = 0; l < k; l++) {
-            sum += A[row * k + l] * B[l + n * col];
+            sum += A[row * k + l] * B[col * k + l];
         }
-        C[row * n + col] = sum;
+        C[row * m + col] = sum;
     }
 }
 // Hadamard product of two vectors kernel
@@ -377,10 +402,9 @@ class CUDA_NN{
 
 			std::cout << "Beginning epoch " << epoch << std::endl;
 			double st = get_time();
-			batch_order = generateShuffledArray(TRAIN_SIZE);
+			batch_order = generateShuffledArray(num_batches);
 			for (int i = 0; i < num_batches; i++) {
-				std::vector<int> batch_indices(batch_order.begin() + i * mini_batch_size, batch_order.begin() + i * mini_batch_size  + mini_batch_size);
-				update_mini_batch(batch_indices, mini_batch_size, training_labels, training_data_gpu, LEARNING_RATE, LAMBDA, TRAIN_SIZE);
+				update_mini_batch(batch_order[i], mini_batch_size, training_labels, training_data_gpu, LEARNING_RATE, LAMBDA, TRAIN_SIZE);
 			}
 			if (test_data != nullptr) {
 				std::cout << "Test data accuracy: " << evaluate(test_data_gpu, test_labels) << "/" << TEST_SIZE << " correct." << std::endl;
@@ -500,7 +524,7 @@ class CUDA_NN{
 		return successes;
 	}
 
-	void update_mini_batch(std::vector<int> batch, int mini_batch_size, int *training_labels, float *training_data, float eta, float lambda, int training_data_size) {
+	void update_mini_batch(int batch, int mini_batch_size, int *training_labels, float *training_data, float eta, float lambda, int training_data_size) {
 		float *nabla_w = new float[weights_len]();
 		float *nabla_b = new float[biases_len]();
 		float *nabla_w_gpu, *nabla_b_gpu;
@@ -509,9 +533,9 @@ class CUDA_NN{
 		CUDA_CHECK(cudaMalloc(&nabla_b_gpu, size_b));
 		CUDA_CHECK(cudaMemcpy(nabla_w_gpu, nabla_w, size_w, cudaMemcpyHostToDevice));
 		CUDA_CHECK(cudaMemcpy(nabla_b_gpu, nabla_b, size_b, cudaMemcpyHostToDevice));
-		// backpropagation: will come back to vectorize this once everything is working correctly
+		// backpropagation
 		for (int i = 0; i < mini_batch_size; i++) {
-			std::tuple<float*, float*> delta_nabla = backprop(batch[i], mini_batch_size, training_labels, training_data); // Tuple contains pointers to GPU data (nabla_w_gpu, nabla_b_gpu)
+			std::tuple<float*, float*> delta_nabla = backprop(batch, mini_batch_size, training_labels, training_data); // Tuple contains pointers to GPU data (nabla_w_gpu, nabla_b_gpu)
 
 			vector_add<<<(weights_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_w_gpu, std::get<0>(delta_nabla), nabla_w_gpu, weights_len);
 			vector_add<<<(biases_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_b_gpu, std::get<1>(delta_nabla), nabla_b_gpu, biases_len);
@@ -547,41 +571,45 @@ class CUDA_NN{
 		float *nabla_w_gpu, *nabla_b_gpu;
 		float *activations_gpu, *zs_gpu, *y_gpu, *delta_gpu;
 
-		int activations_len = std::accumulate(sizes.begin(), sizes.end(), 0);
-		int zs_len = std::accumulate(sizes.begin() + 1, sizes.end(), 0);
-		int size_activations = activations_len * sizeof(float);
-		int size_zs = zs_len * sizeof(float);
+		int activations_len = std::accumulate(sizes.begin(), sizes.end(), 0) * mini_batch_size;
+		int zs_len = std::accumulate(sizes.begin() + 1, sizes.end(), 0) * mini_batch_size;
+		int size_activations = activations_len * mini_batch_size * sizeof(float);
+		int size_zs = zs_len * mini_batch_size * sizeof(float);
 
 		// We want to make some ints of accumulated weights, biases and activations to make the next part easier
-		int accum_w = 0, accum_z = 0, accum_a = 0; // We can use z and b interchangeably for this
+		int accum_w = 0, accum_b, accum_z = 0, accum_a = 0;
 
 		// Put nabla, activations, and zs on GPU
-		CUDA_CHECK(cudaMalloc(&nabla_w_gpu, size_w));		
-		CUDA_CHECK(cudaMalloc(&nabla_b_gpu, size_b));		
-		CUDA_CHECK(cudaMalloc(&activations_gpu, size_activations));
-		CUDA_CHECK(cudaMalloc(&zs_gpu, size_zs));
+		CUDA_CHECK(cudaMalloc(&nabla_w_gpu, size_w * mini_batch_size));		
+		CUDA_CHECK(cudaMalloc(&nabla_b_gpu, size_b * mini_batch_size));		
+		CUDA_CHECK(cudaMalloc(&activations_gpu, size_activations * mini_batch_size));
+		CUDA_CHECK(cudaMalloc(&zs_gpu, size_zs * mini_batch_size));
 		// Set first TRAIN_SIZE activations to input
-		CUDA_CHECK(cudaMemcpy(activations_gpu, &training_data_gpu[batch * INPUT_SIZE], INPUT_SIZE * sizeof(float), cudaMemcpyDeviceToDevice));
-
-		// Forward pass
+		CUDA_CHECK(cudaMemcpy(activations_gpu, &training_data_gpu[batch * INPUT_SIZE], INPUT_SIZE * mini_batch_size * sizeof(float), cudaMemcpyDeviceToDevice));
+		// block size = 1024
+		dim3 block_size(32, 32);
+		dim3 grid_size((mini_batch_size + block_size.x - 1) / block_size.x, (sizes[1] + block_size.y - 1) / block_size.y); 
+		
+		// FORWARD PASS
 		for (int i = 0; i < num_layers - 1; i++) {
+			if (i > 0) grid_size.y = (sizes[i + 1] + block_size.y - 1) / block_size.y;
 			// Calculate z[i] = w[i] * a[i-1] + b[i]
-			matvecmul_gpu<<<(sizes[i + 1] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&weights_gpu[accum_w], &activations_gpu[accum_a], &zs_gpu[accum_z], sizes[i + 1], sizes[i]);
+			matmul_abT<<<grid_size, block_size>>>
+			(&weights_gpu[accum_w], &activations_gpu[accum_a], &zs_gpu[accum_z], sizes[i + 1], sizes[i], mini_batch_size);
 
-			accum_a += sizes[i]; // updated accumulated A layers
+			accum_a += sizes[i] * mini_batch_size; // updated accumulated A layers
 
-			vector_add<<<(sizes[i + 1] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&zs_gpu[accum_z], &biases_gpu[accum_z], &activations_gpu[accum_a], sizes[i + 1]);
+			add_vec_to_mat<<<(sizes[i + 1] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
+			(&zs_gpu[accum_z], &biases_gpu[accum_z], &activations_gpu[accum_a], mini_batch_size, sizes[i + 1]);
 
 			// Calculate a[z[i]]
-			sigmoid_vec<<<(sizes[i + 1] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&activations_gpu[accum_a], &activations_gpu[accum_a], sizes[i + 1]);
-
+			sigmoid_vec<<<(sizes[i + 1] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
+			(&activations_gpu[accum_a], &activations_gpu[accum_a], sizes[i + 1] * mini_batch_size);
 			
 			if (i < num_layers - 2) {
 				accum_w += sizes[i] * sizes[i + 1];
-				accum_z += sizes[i + 1];
+				accum_b += sizes[i + 1];
+				accum_z += sizes[i + 1] * mini_batch_size;
 			}
 		}
 		CUDA_CHECK(cudaDeviceSynchronize());
@@ -595,45 +623,61 @@ class CUDA_NN{
 		// std::cout << std::endl;
 		// delete[] zs;
 
-		// Vectorize our label
-		float *y = new float[OUTPUT_SIZE]();
-		y[training_labels[batch]] = 1.0;
-		CUDA_CHECK(cudaMalloc(&y_gpu, OUTPUT_SIZE * sizeof(float)));
-		CUDA_CHECK(cudaMemcpy(y_gpu, y, OUTPUT_SIZE * sizeof(float), cudaMemcpyHostToDevice));
-		// Get delta
-		CUDA_CHECK(cudaMalloc(&delta_gpu, size_b));
-		vector_sub<<<(OUTPUT_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-		(&activations_gpu[accum_a], y_gpu, &delta_gpu[accum_z], OUTPUT_SIZE);
+		// Vectorize our labels
+		float *y = new float[OUTPUT_SIZE * mini_batch_size]();
+		for (int i = 0; i < mini_batch_size; i++) {
+			y[training_labels[batch + i * mini_batch_size]] = 1.0;
+		}
 
-		CUDA_CHECK(cudaMemcpy(&nabla_b_gpu[accum_z], &delta_gpu[accum_z], OUTPUT_SIZE * sizeof(float), cudaMemcpyDeviceToDevice));
+		CUDA_CHECK(cudaMalloc(&y_gpu, OUTPUT_SIZE * mini_batch_size * sizeof(float)));
+		CUDA_CHECK(cudaMemcpy(y_gpu, y, OUTPUT_SIZE * mini_batch_size * sizeof(float), cudaMemcpyHostToDevice));
+		// BACKWARD PASS
+		// Get delta
+		CUDA_CHECK(cudaMalloc(&delta_gpu, size_b * mini_batch_size));
+		grid_size.x = (OUTPUT_SIZE + block_size.x - 1) / block_size.x;
+		grid_size.y = (mini_batch_size + block_size.y - 1) / block_size.y;
+		matrix_sub<<<grid_size, block_size>>>
+		(&activations_gpu[accum_a], y_gpu, &delta_gpu[accum_z], mini_batch_size, OUTPUT_SIZE);
+
+		// Loop to add deltas to our nabla_b
+		for (int j = 0; j < mini_batch_size; j++) {
+			CUDA_CHECK(cudaMemcpy(&nabla_b_gpu[accum_z + j * biases_len], &delta_gpu[accum_z + j * biases_len], OUTPUT_SIZE * sizeof(float), cudaMemcpyDeviceToDevice));
+		}
 		// Selecting dimensions naively for now
-		dim3 block_size(32, 32);
-		dim3 grid_size((sizes[sizes.size() - 2] + block_size.x - 1) / block_size.x, (OUTPUT_SIZE + block_size.y - 1) / block_size.y);
+		dim3 block_size_3D(32, 32, 32);
+		dim3 grid_size_3D((sizes[sizes.size() - 2] + block_size_3D.x - 1) / block_size_3D.x, 
+		(OUTPUT_SIZE + block_size_3D.y - 1) / block_size_3D.y, 
+		(mini_batch_size + block_size_3D.z - 1) / block_size_3D.z);
 		
-		accum_a -= sizes[sizes.size() - 2];
+		accum_a -= sizes[sizes.size() - 2] * mini_batch_size;
 		
-		outer_product<<<grid_size, block_size>>>(&delta_gpu[accum_z], &activations_gpu[accum_a], &nabla_w_gpu[accum_w], OUTPUT_SIZE, sizes[sizes.size() - 2]);
+		batch_outer_product<<<grid_size_3D, block_size_3D>>>
+		(&delta_gpu[accum_z], &activations_gpu[accum_a], &nabla_w_gpu[accum_w], OUTPUT_SIZE, sizes[sizes.size() - 2], mini_batch_size, weights_len, accum_w);
 
 		// Backward loop
 		for (int i = num_layers - 2; i > 0; i--) {
 			accum_w -= sizes[i - 1] * sizes[i];
-			accum_z -= sizes[i];
-			accum_a -= sizes[i - 1];
+			accum_b -= sizes[i];
+			accum_z -= sizes[i] * mini_batch_size;
+			accum_a -= sizes[i - 1] * mini_batch_size;
 
 			// Calculate sigmoid prime
-			sigmoid_prime_vec<<<(sizes[i] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&zs_gpu[accum_z], &zs_gpu[accum_z], sizes[i]);
+			sigmoid_prime_vec<<<(sizes[i] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&zs_gpu[accum_z], &zs_gpu[accum_z], sizes[i] * mini_batch_size);
 			// Calculate Delta
-			matTvecmul_gpu<<<(sizes[i] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&weights_gpu[accum_w], &delta_gpu[accum_z + sizes[i]], &delta_gpu[accum_z], sizes[i - 1], sizes[i]);
+			grid_size.x = (sizes[i - 1] + block_size.x - 1) / block_size.x;
+			grid_size.y = (mini_batch_size + block_size.y - 1) / block_size.y;
+			matmul_abT<<<grid_size, block_size>>>
+			(&delta_gpu[accum_z + sizes[i] * mini_batch_size], &weights_gpu[accum_w], &delta_gpu[accum_z], mini_batch_size, sizes[i], sizes[i - 1]);
 
-			hadamard_vec<<<(sizes[i] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], sizes[i]);
+			hadamard_vec<<<(sizes[i] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], sizes[i]);
 
 			// Update nabla
 			CUDA_CHECK(cudaMemcpy(&nabla_b_gpu[accum_z], &delta_gpu[accum_z], sizes[i] * sizeof(float), cudaMemcpyDeviceToDevice));
 
-			dim3 grid_size((sizes[i - 1] + block_size.x - 1) / block_size.x, (sizes[i] + block_size.y - 1) / block_size.y);
-			outer_product<<<grid_size, block_size>>>(&delta_gpu[accum_z], &activations_gpu[accum_a], &nabla_w_gpu[accum_w], sizes[i], sizes[i - 1]);
-
+			grid_size.x = ((sizes[i - 1] + block_size.x - 1) / block_size.x);
+			grid_size.y = ((sizes[i] + block_size.y - 1) / block_size.y);
+			batch_outer_product<<<grid_size, block_size>>>
+			(&delta_gpu[accum_z], &activations_gpu[accum_a], &nabla_w_gpu[accum_w], sizes[i], sizes[i - 1], mini_batch_size, weights_len, accum_w);
 		}
 		CUDA_CHECK(cudaDeviceSynchronize());
 		// Debuggin
