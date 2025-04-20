@@ -624,7 +624,7 @@ class CUDA_NN{
 			sigmoid_prime_vec<<<(sizes[i] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&zs_gpu[accum_z], &zs_gpu[accum_z], sizes[i]);
 			// Calculate Delta
 			matTvecmul_gpu<<<(sizes[i] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&weights_gpu[accum_w], &delta_gpu[accum_z + sizes[i]], &delta_gpu[accum_z], sizes[i - 1], sizes[i]);
+			(&weights_gpu[accum_w], &delta_gpu[accum_z + sizes[i]], &delta_gpu[accum_z], sizes[i + 1], sizes[i]);
 
 			hadamard_vec<<<(sizes[i] + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], sizes[i]);
 
