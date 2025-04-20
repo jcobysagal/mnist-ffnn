@@ -635,7 +635,7 @@ class CUDA_NN{
 			outer_product<<<grid_size, block_size>>>(&delta_gpu[accum_z], &activations_gpu[accum_a], &nabla_w_gpu[accum_w], sizes[i], sizes[i - 1]);
 
 		}
-		CUDA_CHECK(cudaDeviceSynchronize());
+		// CUDA_CHECK(cudaDeviceSynchronize());
 		// Debuggin
 		// float *activations = new float[activations_len];  
 		// CUDA_CHECK(cudaMemcpy(activations, activations_gpu, size_activations, cudaMemcpyDeviceToHost));
