@@ -664,16 +664,17 @@ class CUDA_NN{
 			// Calculate sigmoid prime
 			sigmoid_prime_vec<<<(sizes[i] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(&zs_gpu[accum_z], &zs_gpu[accum_z], sizes[i] * mini_batch_size);
 			// Calculate Delta
-			grid_size.x = (sizes[i - 1] + block_size.x - 1) / block_size.x;
+			grid_size.x = (sizes[i] + block_size.x - 1) / block_size.x;
 			matmul_ab<<<grid_size, block_size>>>
-			(&delta_gpu[accum_z + sizes[i] * mini_batch_size], &weights_gpu[accum_w], &delta_gpu[accum_z], mini_batch_size, sizes[i], sizes[i - 1]);
+			(&delta_gpu[accum_z + sizes[i] * mini_batch_size], &weights_gpu[accum_w], &delta_gpu[accum_z], mini_batch_size, sizes[i+1], sizes[i]);
 
-			
 			hadamard_mat<<<grid_size, block_size>>>
-			(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], mini_batch_size, sizes[i]);
+			(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], mini_batch_size, sizes[i-1]);
 
-			// Update nabla
-			CUDA_CHECK(cudaMemcpy(&nabla_b_gpu[accum_z], &delta_gpu[accum_z], sizes[i] * sizeof(float), cudaMemcpyDeviceToDevice));
+			// Loop to add deltas to our nabla_b
+			for (int j = 0; j < mini_batch_size; j++) {
+				CUDA_CHECK(cudaMemcpy(&nabla_b_gpu[accum_z + j * biases_len], &delta_gpu[accum_z + j * biases_len], sizes[i] * sizeof(float), cudaMemcpyDeviceToDevice));
+			}
 
 			grid_size_3D.x = ((sizes[i - 1] + block_size.x - 1) / block_size.x);
 			grid_size_3D.y = ((sizes[i] + block_size.y - 1) / block_size.y);
