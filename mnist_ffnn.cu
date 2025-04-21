@@ -601,11 +601,11 @@ class CUDA_NN{
 			accum_a += sizes[i] * mini_batch_size; // updated accumulated A layers
 
 			add_vec_to_mat<<<grid_size, block_size>>>
-			(&zs_gpu[accum_z], &biases_gpu[accum_z], &zs_gpu[accum_z], mini_batch_size, sizes[i + 1]);
+			(&zs_gpu[accum_z], &biases_gpu[accum_b], &zs_gpu[accum_z], mini_batch_size, sizes[i + 1]);
 
 			// Calculate a[z[i]]
 			sigmoid_vec<<<(sizes[i + 1] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&zs_gpu[accum_a], &activations_gpu[accum_a], sizes[i + 1] * mini_batch_size);
+			(&zs_gpu[accum_z], &activations_gpu[accum_a], sizes[i + 1] * mini_batch_size);
 			
 			if (i < num_layers - 2) {
 				accum_w += sizes[i] * sizes[i + 1];
