@@ -28,8 +28,8 @@ data management easier for CUDA.
 #define TRAIN_SIZE 60000
 #define TEST_SIZE 10000
 #define EPOCHS 30
-#define LEARNING_RATE 0.1
-#define LAMBDA 5.0
+#define LEARNING_RATE 3.0
+#define LAMBDA 0
 #define BLOCK_SIZE 256
 
 
@@ -190,9 +190,7 @@ __global__ void add_vec_to_mat(float *A, float *b, float *C, int n, int m) {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (row < n && col < m) {
-		for (int i = 0; i < m; i++) {
-			C[row * m + i] = A[row * m + i] + b[i];
-		}
+		C[row * m + col] = A[row * m + col] + b[col];
 	}
 }
 // Vector add kernel
@@ -365,8 +363,6 @@ class CUDA_NN{
 		initialize_biases();
 		size_w = weights_len * sizeof(float);
 		size_b = biases_len * sizeof(float);
-
-		std::cout << "Initialization complete" << std::endl;
 	}
 	// Destructor
 	~CUDA_NN(){
@@ -455,7 +451,7 @@ class CUDA_NN{
 	}
 	// Feedforward function
 	float* feedforward(float *input_gpu) {
-		float *output = new float [OUTPUT_SIZE];
+		float *output = new float[OUTPUT_SIZE];
 		float *activations_gpu, *zs_gpu;
 
 		int activations_len = std::accumulate(sizes.begin(), sizes.end(), 0);
@@ -537,22 +533,28 @@ class CUDA_NN{
 		// backpropagation
 		std::tuple<float*, float*> delta_nabla = backprop(batch, mini_batch_size, training_labels, training_data); // Tuple contains pointers to GPU data (nabla_w_gpu, nabla_b_gpu)
 
-		vector_add<<<(weights_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_w_gpu, std::get<0>(delta_nabla), nabla_w_gpu, weights_len);
-		vector_add<<<(biases_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_b_gpu, std::get<1>(delta_nabla), nabla_b_gpu, biases_len);
-		CUDA_CHECK(cudaDeviceSynchronize());
+		// vector_add<<<(weights_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_w_gpu, std::get<0>(delta_nabla), nabla_w_gpu, weights_len);
+		// vector_add<<<(biases_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_b_gpu, std::get<1>(delta_nabla), nabla_b_gpu, biases_len);
+		CUDA_CHECK(cudaMemcpy(nabla_w_gpu, std::get<0>(delta_nabla), size_w, cudaMemcpyDeviceToDevice));
+		CUDA_CHECK(cudaMemcpy(nabla_b_gpu, std::get<1>(delta_nabla), size_b, cudaMemcpyDeviceToDevice));
+		// CUDA_CHECK(cudaDeviceSynchronize());
 
 		CUDA_CHECK(cudaFree(std::get<0>(delta_nabla)));
 		CUDA_CHECK(cudaFree(std::get<1>(delta_nabla)));
 		// Create dummy weights for testing
 		// float *dummy_w = new float[weights_len];
-		// CUDA_CHECK(cudaMemcpy(dummy_w, weights_gpu, size_w, cudaMemcpyDeviceToHost));
+		// CUDA_CHECK(cudaMemcpy(dummy_w, nabla_w_gpu, size_w, cudaMemcpyDeviceToHost));
+		// for (int i = INPUT_SIZE * 30; i < weights_len; i++) {
+		// 	std::cout <<  dummy_w[i] << " ";
+		// }
+		// std::cout << std::endl;
 
 		// Update weights and biases
 		update_weights<<<(weights_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(weights_gpu, nabla_w_gpu, weights_gpu, weights_len, mini_batch_size);
 		update_biases<<<(biases_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(biases_gpu, nabla_b_gpu, biases_gpu, biases_len, mini_batch_size);
 		CUDA_CHECK(cudaDeviceSynchronize());	
 
-		// // Copy gpu weights to device weights and compare for testing
+		// Copy gpu weights to device weights and compare for testing
 		// CUDA_CHECK(cudaMemcpy(weights, weights_gpu, size_w, cudaMemcpyDeviceToHost));
 		// for (int i = INPUT_SIZE * 30; i < weights_len; i++) {
 		// 	std::cout <<  weights[i] << " ";
@@ -598,12 +600,12 @@ class CUDA_NN{
 
 			accum_a += sizes[i] * mini_batch_size; // updated accumulated A layers
 
-			add_vec_to_mat<<<(sizes[i + 1] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&zs_gpu[accum_z], &biases_gpu[accum_z], &activations_gpu[accum_a], mini_batch_size, sizes[i + 1]);
+			add_vec_to_mat<<<grid_size, block_size>>>
+			(&zs_gpu[accum_z], &biases_gpu[accum_z], &zs_gpu[accum_z], mini_batch_size, sizes[i + 1]);
 
 			// Calculate a[z[i]]
 			sigmoid_vec<<<(sizes[i + 1] * mini_batch_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>
-			(&activations_gpu[accum_a], &activations_gpu[accum_a], sizes[i + 1] * mini_batch_size);
+			(&zs_gpu[accum_a], &activations_gpu[accum_a], sizes[i + 1] * mini_batch_size);
 			
 			if (i < num_layers - 2) {
 				accum_w += sizes[i] * sizes[i + 1];
@@ -626,7 +628,7 @@ class CUDA_NN{
 		// Vectorize our labels
 		float *y = new float[OUTPUT_SIZE * mini_batch_size]();
 		for (int i = 0; i < mini_batch_size; i++) {
-			y[training_labels[batch + i * mini_batch_size]] = 1.0;
+			y[training_labels[batch + i] + i * mini_batch_size] = 1.0;
 		}
 
 		CUDA_CHECK(cudaMalloc(&y_gpu, OUTPUT_SIZE * mini_batch_size * sizeof(float)));
@@ -639,10 +641,21 @@ class CUDA_NN{
 		matrix_sub<<<grid_size, block_size>>>
 		(&activations_gpu[accum_a], y_gpu, &delta_gpu[accum_z], mini_batch_size, OUTPUT_SIZE);
 
+		// Debuggin
+		// std::cout << "accum_a " << accum_a << " accum_z " << accum_z << " accum_w " << accum_w << " accum_b " << accum_b << std::endl; 
+		// float *delta_db = new float[biases_len * mini_batch_size];  
+		// CUDA_CHECK(cudaMemcpy(delta_db, delta_gpu, size_b * mini_batch_size, cudaMemcpyDeviceToHost));
+		// std::cout << "Printing delta after backprop for batch sample " << batch << std::endl;
+		// for (int i = sizes[1] * mini_batch_size; i < biases_len * mini_batch_size; i++) {
+		// 	std::cout << delta_db[i] << " ";
+		// }
+		// std::cout << std::endl;
+		// delete[] delta_db;
+
 		// Add deltas to nabla_b
 		CUDA_CHECK(cudaMemcpy(&nabla_b_gpu[accum_b * mini_batch_size], &delta_gpu[accum_b * mini_batch_size], OUTPUT_SIZE * mini_batch_size * sizeof(float), cudaMemcpyDeviceToDevice));
 		// Selecting dimensions naively for now
-		dim3 block_size_3D(16, 16, 4);
+		dim3 block_size_3D(32, 16, 2);
 		dim3 grid_size_3D((sizes[sizes.size() - 2] + block_size_3D.x - 1) / block_size_3D.x, 
 		(OUTPUT_SIZE + block_size_3D.y - 1) / block_size_3D.y, 
 		(mini_batch_size + block_size_3D.z - 1) / block_size_3D.z);
@@ -666,6 +679,7 @@ class CUDA_NN{
 			matmul_ab<<<grid_size, block_size>>>
 			(&delta_gpu[accum_z + sizes[i] * mini_batch_size], &weights_gpu[accum_w], &delta_gpu[accum_z], mini_batch_size, sizes[i+1], sizes[i]);
 
+			grid_size.x = (sizes[i-1] + block_size.x - 1) / block_size.x;
 			hadamard_mat<<<grid_size, block_size>>>
 			(&delta_gpu[accum_z], &zs_gpu[accum_z], &delta_gpu[accum_z], mini_batch_size, sizes[i-1]);
 
@@ -682,7 +696,7 @@ class CUDA_NN{
 		// float *activations = new float[activations_len];  
 		// CUDA_CHECK(cudaMemcpy(activations, activations_gpu, size_activations, cudaMemcpyDeviceToHost));
 		// std::cout << "Printing activations after backprop for batch sample " << batch << std::endl;
-		// for (int i = 0; i < activations_len; i++) {
+		// for (int i = INPUT_SIZE * mini_batch_size; i < activations_len; i++) {
 		// 	std::cout << activations[i] << " ";
 		// }
 		// std::cout << std::endl;
@@ -697,13 +711,12 @@ class CUDA_NN{
 			vector_add<<<(weights_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_w_out, &nabla_w_gpu[i * weights_len], nabla_w_out, weights_len);
 			vector_add<<<(biases_len + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(nabla_b_out, &nabla_b_gpu[i * biases_len], nabla_b_out, biases_len);
 		}
-
 		// Debuggin
-		// float *nabla_db = new float[weights_len * mini_batch_size];  
-		// CUDA_CHECK(cudaMemcpy(nabla_db, nabla_w_gpu, size_w * mini_batch_size, cudaMemcpyDeviceToHost));
+		// float *nabla_db = new float[weights_len];  
+		// CUDA_CHECK(cudaMemcpy(nabla_db, nabla_w_out, size_w, cudaMemcpyDeviceToHost));
 		// std::cout << "Printing weights after backprop for batch sample " << batch << std::endl;
-		// for (int i = 0; i < weights_len * mini_batch_size; i++) {
-		// 	if (nabla_db[i] != 0 ) std::cout << nabla_db[i] << " ";
+		// for (int i = sizes[0] * sizes[1]; i < weights_len; i++) {
+		// 	std::cout << nabla_db[i] / mini_batch_size << " ";
 		// }
 		// std::cout << std::endl;
 		// delete[] nabla_db;
