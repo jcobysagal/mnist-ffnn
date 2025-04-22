@@ -27,9 +27,9 @@ int main() {
 	std::tuple<std::vector<std::vector<double>>, std::vector<std::vector<double>>> data_tuple;
 	int epochs = 30;
 	int mini_batch_size = 10;
-	float eta = 0.5;
-	float lmbda = 2.5;
-	bool val = true;
+	float eta = 3.0;
+	float lmbda = 0;
+	bool val = false;
 	
 	std::cout << "Loading mnist dataset..." << std::endl;
 	data_tuple = get_data_tuples();
