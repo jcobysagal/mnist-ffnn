@@ -590,7 +590,6 @@ class CUDA_NN{
 		// block size = 1024
 		dim3 block_size(32, 32);
 		dim3 grid_size((sizes[1] + block_size.x - 1) / block_size.x, (mini_batch_size + block_size.y - 1) / block_size.y); 
-		
 		// FORWARD PASS
 		for (int i = 0; i < num_layers - 1; i++) {
 			if (i > 0) grid_size.x = (sizes[i + 1] + block_size.x - 1) / block_size.x;
@@ -628,9 +627,8 @@ class CUDA_NN{
 		// Vectorize our labels
 		float *y = new float[OUTPUT_SIZE * mini_batch_size]();
 		for (int i = 0; i < mini_batch_size; i++) {
-			y[training_labels[batch + i] + i * mini_batch_size] = 1.0;
+			y[training_labels[batch + i] + i * OUTPUT_SIZE] = 1.0;
 		}
-
 		CUDA_CHECK(cudaMalloc(&y_gpu, OUTPUT_SIZE * mini_batch_size * sizeof(float)));
 		CUDA_CHECK(cudaMemcpy(y_gpu, y, OUTPUT_SIZE * mini_batch_size * sizeof(float), cudaMemcpyHostToDevice));
 		// BACKWARD PASS
@@ -743,7 +741,7 @@ int main() {
     }
 	
 	std::vector<int> sizes = {INPUT_SIZE, 30, OUTPUT_SIZE};
-	int mini_batch_size = 10;
+	int mini_batch_size = 32;
 	CUDA_NN nn(sizes);
 	nn.SGD(std::get<0>(data_tuple), std::get<1>(data_tuple), EPOCHS, mini_batch_size, LEARNING_RATE, LAMBDA, false, std::get<2>(data_tuple), std::get<3>(data_tuple));
 
