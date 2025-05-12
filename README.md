@@ -7,7 +7,7 @@ You will need the csv files from here: https://www.kaggle.com/datasets/oddration
 This is a model inspired by Michael Nielsen's code in his "Neural Networks and Deep Learning" Textbook. I could have used some libraries to optimize it but I wanted to learn how to implement something like this completely from scratch in the language.
 
 ## The CUDA Model:
-I ported this model from my C++ code as a way to learn the ins and outs of CUDA and how to accelerate the training and inference times of my model. I have vectorized the model to so that it trains over entire mini-batches in parallel and it achieves a good speedup over the super-naive, single-threaded C++ implementation.
+I ported this model from my C++ code as a way to learn the ins and outs of CUDA and how to accelerate the training and inference times of my model. I have vectorized the model so that it trains over entire mini-batches in parallel and it achieves a good speedup over the super-naive, single-threaded C++ implementation.
 
 I have also finally added a CMakeLists.txt! Just do the following to build the project:
 
