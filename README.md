@@ -13,9 +13,9 @@ I have also finally added a CMakeLists.txt! Just do the following to build the p
 
 From the repo root folder in terminal do:
 
-```$ mkdir build && cd build  
+` $ mkdir build && cd build  
 $ cmake ..  
 $ cmake --build .  
-$ ./mnist_ffnn```  
+$ ./mnist_ffnn `  
 
 This was all implemented on my rig consisting of an AMD Ryzen 7 7800X3D CPU and NVIDIA RTX 4080 Super GPU. Results may vary.
