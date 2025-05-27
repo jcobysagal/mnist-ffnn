@@ -1,5 +1,5 @@
 /*
-Third reword of my CUDA-Accelerated mnist Feed-Forward Neural Network!
+Third rework of my CUDA-Accelerated mnist Feed-Forward Neural Network!
 Second attempt definitely was an improvement over my first attempt, but I figured out a much better way to organize the neural net with structs
 */
 
