@@ -179,9 +179,9 @@ class CUDA_NN{
 		return output;	
 	}
 	// function to evaluate performance of the neural network 
-	int evaluate(float* test_data, int* test_labels) {
+	int evaluate(float *test_data, int *test_labels) {
 		// Separate test_data into data and labels
-		float* res;
+		float *res;
 		int successes = 0;
 
 		for (int i = 0; i < TEST_SIZE; i++) {
